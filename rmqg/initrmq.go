@@ -1,12 +1,13 @@
 package rmqg
 
 import (
-	"github.com/streadway/amqp"
-	"log"
 	"fmt"
+	"log"
 	"sync"
-	"github.com/satori/go.uuid"
 	"time"
+
+	"github.com/satori/go.uuid"
+	"github.com/streadway/amqp"
 )
 
 const (
@@ -15,11 +16,12 @@ const (
 
 	//worker number
 	ReceiverNum = 5
+	SenderNum   = 5
 )
 
-type Rmqg struct{
-	url string//addr url
-
+type Rmqg struct {
+	url    string //addr url
+	queues []*QueueConfig
 }
 
 type QueueConfig struct {
@@ -41,9 +43,15 @@ type Message struct {
 	notifyResponse NotifyResponse // notify result from callback url
 }
 
+type MessageSend struct {
+	queueConfig    QueueConfig
+	amqpPublishing *amqp.Publishing // message send to rabbitmq
+	//notifyResponse NotifyResponse   // notify result from callback url
+}
+
 //*****************************
 
-func (this *Rmqg)InitRmqp() {
+func (this *Rmqg) InitRmqp() {
 
 }
 
@@ -59,7 +67,7 @@ func PanicOnError(err error) {
 	}
 }
 
-func (qc *QueueConfig) DeclareExchange(channel *amqp.Channel) {
+func (qc *QueueConfig) DeclareExchanges(channel *amqp.Channel) {
 	exchanges := []string{
 		qc.WorkerExchangeName(),
 		qc.RetryExchangeName(),
@@ -76,7 +84,7 @@ func (qc *QueueConfig) DeclareExchange(channel *amqp.Channel) {
 	}
 }
 
-func (qc *QueueConfig) DeclareQueue(channel *amqp.Channel) {
+func (qc *QueueConfig) DeclareQueues(channel *amqp.Channel) {
 	var err error
 	// 定义重试队列
 	log.Printf("declaring retry queue: %s\n", qc.RetryQueueName())
@@ -114,10 +122,9 @@ func (qc *QueueConfig) DeclareQueue(channel *amqp.Channel) {
 	PanicOnError(err)
 }
 
-
 //*******************
 //*******************rmqg
-func (this *Rmqg)setupChannel() (*amqp.Connection, *amqp.Channel, error) {
+func (this *Rmqg) setupChannel() (*amqp.Connection, *amqp.Channel, error) {
 	//url := os.Getenv("AMQP_URL")
 
 	conn, err := amqp.Dial(this.url)
@@ -143,7 +150,7 @@ func (this *Rmqg)setupChannel() (*amqp.Connection, *amqp.Channel, error) {
 	return conn, channel, nil
 }
 
-func (this *Rmqg)ReceiveMessage(queues []*QueueConfig, done <-chan struct{}) <-chan Message {
+func (this *Rmqg) ReceiveMessages(queues []*QueueConfig, done <-chan struct{}) <-chan Message {
 	out := make(chan Message, ChannelBufferLength)
 	var wg sync.WaitGroup
 
@@ -205,6 +212,80 @@ func (this *Rmqg)ReceiveMessage(queues []*QueueConfig, done <-chan struct{}) <-c
 	return out
 }
 
+func (this *Rmqg) SendMessages(in <-chan MessageSend) <-chan Message {
+	out := make(chan Message)
+
+	var wg sync.WaitGroup
+
+	resender := func() {
+		defer wg.Done()
+
+	RECONNECT:
+		for {
+			conn, channel, err := this.setupChannel()
+			if err != nil {
+				PanicOnError(err)
+			}
+
+			for m := range in {
+				for _, key := range m.queueConfig.RoutingKey {
+					err := channel.Publish(
+						m.queueConfig.QueueName, // publish to an exchange
+						key,   // routing to 0 or more queues
+						false, // mandatory
+						false, // immediate
+						*m.amqpPublishing,
+					)
+
+					if err == amqp.ErrClosed {
+						time.Sleep(5 * time.Second)
+						continue RECONNECT
+					}
+				}
+			}
+
+			// normally quit , we quit too
+			conn.Close()
+			break
+		}
+	}
+
+	for i := 0; i < SenderNum; i++ {
+		wg.Add(1)
+		go resender()
+	}
+
+	go func() {
+		wg.Wait()
+		log.Printf("all resender is done, close out")
+		close(out)
+	}()
+
+	return out
+}
+
+func cloneToPublishMsg(msg *amqp.Delivery) *amqp.Publishing {
+	newMsg := amqp.Publishing{
+		Headers: msg.Headers,
+
+		ContentType:     msg.ContentType,
+		ContentEncoding: msg.ContentEncoding,
+		DeliveryMode:    msg.DeliveryMode,
+		Priority:        msg.Priority,
+		CorrelationId:   msg.CorrelationId,
+		ReplyTo:         msg.ReplyTo,
+		Expiration:      msg.Expiration,
+		MessageId:       msg.MessageId,
+		Timestamp:       msg.Timestamp,
+		Type:            msg.Type,
+		UserId:          msg.UserId,
+		AppId:           msg.AppId,
+
+		Body: msg.Body,
+	}
+
+	return &newMsg
+}
 
 //***************************************
 //***************************************
