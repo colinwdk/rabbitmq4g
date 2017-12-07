@@ -20,8 +20,19 @@ const (
 )
 
 type Rmqg struct {
-	url    string //addr url
-	queues []*QueueConfig
+	Url         string //addr url
+	Exchanges   map[string]*ExchangeConfig
+	Queues      map[string]*QueueConfig
+	SendChannel chan MessageSend
+}
+
+type ExchangeConfig struct {
+	ExchangeName string
+	ExchangeType string
+
+	//routingkeyQueues [][]interface{} // routingKey + *QueueConfig
+	//routingKey []string
+	BindQueues map[string][]*QueueConfig //string=routing_key
 }
 
 type QueueConfig struct {
@@ -43,9 +54,13 @@ type Message struct {
 	notifyResponse NotifyResponse // notify result from callback url
 }
 
+type Publishing amqp.Publishing
 type MessageSend struct {
-	queueConfig    QueueConfig
-	amqpPublishing *amqp.Publishing // message send to rabbitmq
+	//queueConfig    *QueueConfig
+	Exchange   *ExchangeConfig
+	RoutingKey string
+
+	AmqpPublishing Publishing // message send to rabbitmq
 	//notifyResponse NotifyResponse   // notify result from callback url
 }
 
@@ -124,10 +139,39 @@ func (qc *QueueConfig) DeclareQueues(channel *amqp.Channel) {
 
 //*******************
 //*******************rmqg
-func (this *Rmqg) setupChannel() (*amqp.Connection, *amqp.Channel, error) {
+func (this *Rmqg) DeclareQueues(channel *amqp.Channel) {
+	var err error
+	for _, q := range this.Queues {
+		log.Printf("declaring queue: %s\n", q)
+		_, err = channel.QueueDeclare(q.QueueName, true, false, false, false, nil)
+		PanicOnError(err)
+	}
+}
+
+func (this *Rmqg) DeclareExchanges(channel *amqp.Channel) {
+	for _, e := range this.Exchanges {
+		log.Printf("declaring exchange: %s\n", e)
+
+		if err := channel.ExchangeDeclare(e.ExchangeName, e.ExchangeType, true, false, false, false, nil); err != nil {
+			log.Printf("channel ExchangeDeclare error | %s | %s | %s \n", e.ExchangeName, e.ExchangeType, err)
+			///PanicOnError(err)
+			continue
+		}
+
+		for k, v := range e.BindQueues {
+			for _, q := range v {
+				if err := channel.QueueBind(q.QueueName, k, e.ExchangeName, false, nil); err != nil {
+					log.Printf("QueueBind error | %s | %s | %s | %s \n", q.QueueName, k, e.ExchangeName, err)
+				}
+			}
+		}
+	}
+}
+
+func (this *Rmqg) SetupChannel() (*amqp.Connection, *amqp.Channel, error) {
 	//url := os.Getenv("AMQP_URL")
 
-	conn, err := amqp.Dial(this.url)
+	conn, err := amqp.Dial(this.Url)
 	if err != nil {
 		LogOnError(err)
 		return nil, nil, err
@@ -159,7 +203,7 @@ func (this *Rmqg) ReceiveMessages(queues []*QueueConfig, done <-chan struct{}) <
 
 	RECONNECT:
 		for {
-			_, channel, err := this.setupChannel()
+			_, channel, err := this.SetupChannel()
 			if err != nil {
 				PanicOnError(err)
 			}
@@ -212,7 +256,7 @@ func (this *Rmqg) ReceiveMessages(queues []*QueueConfig, done <-chan struct{}) <
 	return out
 }
 
-func (this *Rmqg) SendMessages(in <-chan MessageSend) <-chan Message {
+func (this *Rmqg) SendMessages() <-chan Message { //in <-chan MessageSend
 	out := make(chan Message)
 
 	var wg sync.WaitGroup
@@ -222,13 +266,13 @@ func (this *Rmqg) SendMessages(in <-chan MessageSend) <-chan Message {
 
 	RECONNECT:
 		for {
-			conn, channel, err := this.setupChannel()
+			conn, channel, err := this.SetupChannel()
 			if err != nil {
 				PanicOnError(err)
 			}
 
-			for m := range in {
-				for _, key := range m.queueConfig.RoutingKey {
+			for m := range this.SendChannel { //in
+				/*for _, key := range m.queueConfig.RoutingKey {
 					err := channel.Publish(
 						m.queueConfig.QueueName, // publish to an exchange
 						key,   // routing to 0 or more queues
@@ -241,6 +285,18 @@ func (this *Rmqg) SendMessages(in <-chan MessageSend) <-chan Message {
 						time.Sleep(5 * time.Second)
 						continue RECONNECT
 					}
+				}*/
+				err := channel.Publish(
+					m.Exchange.ExchangeName, // publish to an exchange
+					m.RoutingKey,            // routing to 0 or more queues
+					false,                   // mandatory
+					false,                   // immediate
+					amqp.Publishing(m.AmqpPublishing),
+				)
+
+				if err == amqp.ErrClosed {
+					time.Sleep(5 * time.Second)
+					continue RECONNECT
 				}
 			}
 
