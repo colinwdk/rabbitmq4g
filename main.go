@@ -88,6 +88,7 @@ func main() {
 			} else {
 				fmt.Println("nnnnnnnnnnnnnnnnnnnnnnnnn")
 				time.Sleep(time.Second * 1)
+				break
 			}
 		}
 	}()

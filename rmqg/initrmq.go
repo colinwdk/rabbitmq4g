@@ -8,6 +8,7 @@ import (
 
 	"github.com/satori/go.uuid"
 	"github.com/streadway/amqp"
+	"runtime"
 )
 
 const (
@@ -91,6 +92,19 @@ func PanicOnError(err error) {
 	}
 }
 
+func PrintPanicStack() {
+	if x := recover(); x != nil {
+		log.Printf("%v", x)
+		i := 0
+		funcName, file, line, ok := runtime.Caller(i)
+		for ok {
+			log.Printf("frame %v:[func:%v,file:%v,line:%v]\n", i, runtime.FuncForPC(funcName).Name(), file, line)
+			i++
+			funcName, file, line, ok = runtime.Caller(i)
+		}
+	}
+}
+
 //*******************
 //*******************rmqg
 func (this *Rmqg) DeclareQueues(channel *amqp.Channel, queues map[string]*QueueConfig) {
@@ -142,22 +156,16 @@ func (this *Rmqg) SetupChannel() (*amqp.Connection, *amqp.Channel, error) {
 	}
 
 	log.Printf("setup channel success!")
-
 	return conn, channel, nil
 }
 
 func (this *Rmqg) RecvMessages(done <-chan struct{}) { //queues []*QueueConfig, // <-chan Message
-	//out := make(chan Message, ChannelBufferLength)
 	this.RecvChannel = make(chan MessageRecv, ChannelBufferLength)
 	var wg sync.WaitGroup
 
 	receiver := func(qc *QueueConfig) {
 		defer wg.Done()
-		/*defer func() {
-			if err := recover(); err != nil {
-				fmt.Println(err)
-			}
-		}()*/
+		defer PrintPanicStack()
 
 	RECONNECT:
 		for {
@@ -177,7 +185,11 @@ func (this *Rmqg) RecvMessages(done <-chan struct{}) { //queues []*QueueConfig, 
 				false,        // no-wait
 				nil,          // args
 			)
-			PanicOnError(err)
+			if err != nil {
+				///PanicOnError(err)
+				time.Sleep(5 * time.Second)
+				continue
+			}
 
 			for {
 				select {
@@ -215,22 +227,15 @@ func (this *Rmqg) RecvMessages(done <-chan struct{}) { //queues []*QueueConfig, 
 		close(this.RecvChannel)
 	}()
 
-	//return out
 }
 
 func (this *Rmqg) SendMessages() { //in <-chan MessageSend //<-chan Message
-	//out := make(chan Message)
 	this.SendChannel = make(chan MessageSend, ChannelBufferLength) //declare send channel
 
 	var wg sync.WaitGroup
-
 	resender := func() {
 		defer wg.Done()
-		/*defer func() {
-			if err := recover(); err != nil {
-				fmt.Println(err)
-			}
-		}()*/
+		defer PrintPanicStack()
 
 	RECONNECT:
 		for {
@@ -256,7 +261,6 @@ func (this *Rmqg) SendMessages() { //in <-chan MessageSend //<-chan Message
 				}
 			}
 
-			// normally quit , we quit too
 			conn.Close()
 			break
 		}
@@ -270,7 +274,7 @@ func (this *Rmqg) SendMessages() { //in <-chan MessageSend //<-chan Message
 	go func() {
 		wg.Wait()
 		log.Printf("all sender is done, close out")
-		//close(out)
+		close(this.SendChannel)
 	}()
 
 	//return out
