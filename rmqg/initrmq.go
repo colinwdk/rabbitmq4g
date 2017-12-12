@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/satori/go.uuid"
+	//"github.com/satori/go.uuid"
 	"github.com/streadway/amqp"
 	"runtime"
 )
@@ -25,9 +25,11 @@ type Rmqg struct {
 	Exchanges   map[string]*ExchangeConfig
 	SendQueues  map[string]*QueueConfig
 	SendChannel chan MessageSend
+	SenderCount int
 
 	RecvQueues  map[string]*QueueConfig
 	RecvChannel chan MessageRecv
+	RecverCount int
 }
 
 type ExchangeConfig struct {
@@ -199,11 +201,9 @@ func (this *Rmqg) RecvMessages(done <-chan struct{}) { //queues []*QueueConfig, 
 						time.Sleep(5 * time.Second)
 						continue RECONNECT
 					}
-					msg.MessageId = fmt.Sprintf("%s", uuid.NewV4())
+					//msg.MessageId = fmt.Sprintf("%s", uuid.NewV4())
 					message := MessageRecv{qc, &msg} //, 0
-					//out <- message
 					this.RecvChannel <- message
-					msg.Ack(false)
 
 				case <-done:
 					log.Printf("receiver: received a done signal")
@@ -214,8 +214,8 @@ func (this *Rmqg) RecvMessages(done <-chan struct{}) { //queues []*QueueConfig, 
 	}
 
 	for _, queue := range this.RecvQueues { //queues
-		wg.Add(ReceiverNum)
-		for i := 0; i < ReceiverNum; i++ {
+		wg.Add(this.RecverCount)//ReceiverNum
+		for i := 0; i < this.RecverCount; i++ {//ReceiverNum
 			go receiver(queue)
 		}
 	}
@@ -266,7 +266,7 @@ func (this *Rmqg) SendMessages() { //in <-chan MessageSend //<-chan Message
 		}
 	}
 
-	for i := 0; i < SenderNum; i++ {
+	for i := 0; i < this.SenderCount; i++ {//SenderNum
 		wg.Add(1)
 		go resender()
 	}

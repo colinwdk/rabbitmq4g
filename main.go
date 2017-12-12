@@ -16,6 +16,9 @@ func main() {
 		SendQueues: make(map[string]*rmqg.QueueConfig, 5),
 		//SendChannel: make(chan rmqg.MessageSend, 100),
 		RecvQueues: make(map[string]*rmqg.QueueConfig, 5),
+
+		SenderCount:1,
+		RecverCount:1,
 	}
 
 	//********Declare queue
@@ -85,6 +88,7 @@ func main() {
 			info, ok := <-qg.RecvChannel
 			if ok {
 				fmt.Println("rrrrrrrrrrrrrrrrrr:", info.QueueConfig.QueueName, string(info.AmqpDelivery.Body))
+				info.AmqpDelivery.Ack(false)
 			} else {
 				fmt.Println("nnnnnnnnnnnnnnnnnnnnnnnnn")
 				time.Sleep(time.Second * 1)
