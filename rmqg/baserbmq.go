@@ -78,10 +78,6 @@ type MessageSend struct {
 
 //*****************************
 
-func (this *Rmqg) InitRmqp() {
-
-}
-
 func LogOnError(err error) {
 	if err != nil {
 		fmt.Printf("ERROR - %s\n", err)

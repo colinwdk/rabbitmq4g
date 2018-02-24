@@ -5,12 +5,12 @@ import (
 
 	"fmt"
 
-	"github.com/colinwdk/rabbitmq4g/rmqg"
+	"github.com/colinwdk/rbmq4g/rmqg"
 	"github.com/streadway/amqp"
 )
 
 func main() {
-	qg := rmqg.Rmqg{
+	/*qg := rmqg.Rmqg{
 		Url:        "amqp://test:test123@192.168.146.128:5672/",
 		Exchanges:  make(map[string]*rmqg.ExchangeConfig, 5),
 		SendQueues: make(map[string]*rmqg.QueueConfig, 5),
@@ -28,11 +28,11 @@ func main() {
 	queue2 := rmqg.QueueConfig{
 		QueueName: "dy2",
 	}
-	qg.SendQueues["dy1"] = &queue1
-	qg.SendQueues["dy2"] = &queue2
+	qg.SendQueues[queue1.QueueName] = &queue1
+	qg.SendQueues[queue2.QueueName] = &queue2
 
-	qg.RecvQueues["dy1"] = &queue1
-	qg.RecvQueues["dy2"] = &queue2
+	qg.RecvQueues[queue1.QueueName] = &queue1
+	qg.RecvQueues[queue2.QueueName] = &queue2
 
 	//********Declare exchange
 	exchange := rmqg.ExchangeConfig{
@@ -56,11 +56,12 @@ func main() {
 
 	qg.DeclareQueues(channel, qg.SendQueues)
 	qg.DeclareExchanges(channel)
-	qg.SendMessages()
+	//***************************************
 
+	qg.SendMessages()
 	done := make(chan struct{}, 1)
 	qg.RecvMessages(done)
-	//***************************************
+	//****************************************/
 
 	m := rmqg.MessageSend{
 		Exchange:   &exchange,
